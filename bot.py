@@ -1,13 +1,12 @@
+import aiogram
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.middlewares.logging import LoggingMiddleware 
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 API_TOKEN = '7462539798:AAFQ4WJl34YT0oNKl1c8t_nJgNgsJmOqNYg'
 
-import aiogram
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.utils import executor 
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-
 bot = Bot(token=API_TOKEN)
+
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 def start(message):
@@ -23,6 +22,21 @@ ch = ReplyKeyboardMarkup(keyboard=[
     [KeyboardButton(text='Аниме')]
     [KeyboardButton(text='Мультфильмы')]
 ])
+@dp.message_handler(commands=['start'])
+async def send_welcome(message: types.Message):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    button1 = InlineKeyboardButton("Хорор", callback_data="button1")
+    button2 = InlineKeyboardButton("Ромаентика", callback_data="button2")
+    keyboard.add(button1, button2)
+    await message.answer("Хорор:", reply_markup=keyboard)
+@dp.callback_query_handler(lambda c: c.data)
+async def process_callback(callback_query: types.CallbackQuery):
+    if callback_query.data == "button1":
+        await bot.answer_callback_query(callback_query.id)
+        await bot.send_message(callback_query.from_user.id, "Лови: https://www.ivi.ru/movies/dlya_vsej_semi")
+    elif callback_query.data == "button2":
+        await bot.answer_callback_query(callback_query.id)
+        await bot.send_message(callback_query.from_user.id, "Лови: https://www.kinopoisk.ru/lists/movies/top_100_horrors_by_best_horror_movies/?utm_referrer=www.google.com")
 
 @dp.message_handler(content_types=types.ContentType.DOCUMENT)
 async def handle_document(message: types.Message):
@@ -40,23 +54,9 @@ async def send_welcome(message: types.Message):
 async def send_welcome(message: types.Message):
     await bot.send_message(message.chat.id, "https://www.ivi.ru/movies/dlya_vsej_semi")
 
-@dp.message_handler(lambda message: message.text.lower() == "привет")
-async def greet_user(message: types.Message):
-    await message.reply("Привет! Как дела?")
-
 @dp.message_handler(lambda message: message.text.lower() == "нормально")
 async def greet_user(message: types.Message):
     await message.reply("я тоже хорошо, а вы любите фильмы?")
-
-@dp.message_handler(commands=['famali'])
-async def send_welcome(message: types.Message):
-    await bot.send_message(message.chat.id, "Лови: https://www.ivi.ru/movies/dlya_vsej_semi")
-@dp.message_handler(commands=['horor'])
-async def send_welcome(message: types.Message):
-    await bot.send_message(message.chat.id, "Лови: https://www.kinopoisk.ru/lists/movies/top_100_horrors_by_best_horror_movies/?utm_referrer=www.google.com")
-
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
 
 
 
