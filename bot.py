@@ -1,62 +1,101 @@
-import aiogram
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.middlewares.logging import LoggingMiddleware 
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+@dp.message_handler(commands=['help'])
+async def send_help(message: types.Message):
+    help_text = """
+    Вот что я умею:
+    /start - Начать диалог
+    /help - Показать это сообщение
+    Фильмы - Показать фильмы
+    Аниме - Показать аниме
+    Мультсериалы - Показать мультсериалы
+    Найди <название> - Найти фильм или сериал
+    """
+    await message.reply(help_text)
+8. Итоговый код
+Вот итоговый код с учетом всех улучшений:
 
-API_TOKEN = '7462539798:AAFQ4WJl34YT0oNKl1c8t_nJgNgsJmOqNYg'
+python
+Copy
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.utils import executor
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+import os
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+API_TOKEN = 'ВАШ_ТОКЕН_ЗДЕСЬ'
 
 bot = Bot(token=API_TOKEN)
-
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
-def start(message):
- bot.send_message(message.chat.id, 'выбирай ')
- markup= types.ReplyKeyboardMarkup()
- btn1 = types.KeyboardButton('кнопка')
- btn2 = types.KeyboardButton('кнопка')
- markup.add(btn1, btn2)
- bot.send_message(message.chat.id, 'выбирай', reply_markup=markup)
-# клвавиатура ваааааа осталось придумать как стучать на сайты аааа 
-ch = ReplyKeyboardMarkup(keyboard=[
-    [KeyboardButton(text='Фильмы')],
-    [KeyboardButton(text='Аниме')]
-    [KeyboardButton(text='Мультфильмы')]
-])
+
+# Создаем папку для загрузки файлов, если она не существует
+if not os.path.exists('./downloads'):
+    os.makedirs('./downloads')
+
+# Клавиатура
+button1 = KeyboardButton(text='Фильмы')
+button2 = KeyboardButton(text='Аниме')
+button3 = KeyboardButton(text='Мультсериалы')
+keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+keyboard.add(button1, button2)
+keyboard.add(button3)
+
+@dp.message_handler(lambda message: message.text.lower().startswith("найди"))
+async def search_content(message: types.Message):
+    query = message.text.lower().replace("найди", "").strip()
+    if query:
+        await message.reply(f"Ищу {query}...")
+        await message.reply(f"Вот что я нашел: https://www.ivi.ru/search/?q={query}")
+    else:
+        await message.reply("Пожалуйста, укажите название фильма или сериала.")
+
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    button1 = InlineKeyboardButton("Хорор", callback_data="button1")
-    button2 = InlineKeyboardButton("Ромаентика", callback_data="button2")
-    keyboard.add(button1, button2)
-    await message.answer("Хорор:", reply_markup=keyboard)
-@dp.callback_query_handler(lambda c: c.data)
-async def process_callback(callback_query: types.CallbackQuery):
-    if callback_query.data == "button1":
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, "Лови: https://www.ivi.ru/movies/dlya_vsej_semi")
-    elif callback_query.data == "button2":
-        await bot.answer_callback_query(callback_query.id)
-        await bot.send_message(callback_query.from_user.id, "Лови: https://www.kinopoisk.ru/lists/movies/top_100_horrors_by_best_horror_movies/?utm_referrer=www.google.com")
+    inline_kb = InlineKeyboardMarkup()
+    inline_kb.add(InlineKeyboardButton("Фильмы", url="https://www.ivi.ru/movies/dlya_vsej_semi"))
+    inline_kb.add(InlineKeyboardButton("Аниме", url="https://www.kinopoisk.ru/lists/movies/top_100_horrors_by_best_horror_movies/"))
+    inline_kb.add(InlineKeyboardButton("Мультсериалы", url="https://www.ivi.ru/movies/dlya_vsej_semi"))
+    await message.reply("Привет! Я бот Борис наждачка. Что вы хотите посмотреть сегодня?", reply_markup=keyboard)
+
+@dp.message_handler(lambda message: "фильм" in message.text.lower())
+async def send_movies(message: types.Message):
+    await message.reply("Лови: https://www.ivi.ru/movies/dlya_vsej_semi")
+
+@dp.message_handler(lambda message: "аниме" in message.text.lower())
+async def send_anime(message: types.Message):
+    await message.reply("Лови: https://www.kinopoisk.ru/lists/movies/top_100_horrors_by_best_horror_movies/?utm_referrer=www.google.com")
+
+@dp.message_handler(lambda message: "мультсериал" in message.text.lower())
+async def send_cartoons(message: types.Message):
+    await message.reply("Лови: https://www.ivi.ru/movies/dlya_vsej_semi")
 
 @dp.message_handler(content_types=types.ContentType.DOCUMENT)
 async def handle_document(message: types.Message):
-    print(message)
-    document_id = message.document.file_id
-    file_info = await bot.get_file(document_id)
-    await bot.download_file(file_info.file_path, f"./downloads/{message.document.file_name}")
-    await bot.send_message(message.chat.id, f"Файл {message.document.file_name} получен и сохранен.")
+    try:
+        document_id = message.document.file_id
+        file_info = await bot.get_file(document_id)
+        await bot.download_file(file_info.file_path, f"./downloads/{message.document.file_name}")
+        await message.reply(f"Файл {message.document.file_name} получен и сохранен.")
+    except Exception as e:
+        await message.reply(f"Произошла ошибка: {e}")
 
-@dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
-    await bot.send_message(message.chat.id, "Привет! Я бот Борис наждачка. как ваши дела. Что вы хотите посмотреть сегодня ")
+@dp.message_handler(commands=['help'])
+async def send_help(message: types.Message):
+    help_text = """
+    Вот что я умею:
+    /start - Начать диалог
+    /help - Показать это сообщение
+    Фильмы - Показать фильмы
+    Аниме - Показать аниме
+    Мультсериалы - Показать мультсериалы
+    Найди <название> - Найти фильм или сериал
+    """
+    await message.reply(help_text)
 
-@dp.message_handler(commands=['Для_все_семьи'])
-async def send_welcome(message: types.Message):
-    await bot.send_message(message.chat.id, "https://www.ivi.ru/movies/dlya_vsej_semi")
-
-@dp.message_handler(lambda message: message.text.lower() == "нормально")
-async def greet_user(message: types.Message):
-    await message.reply("я тоже хорошо, а вы любите фильмы?")
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
 
 
 
