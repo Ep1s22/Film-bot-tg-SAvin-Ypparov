@@ -1,101 +1,148 @@
-@dp.message_handler(commands=['help'])
-async def send_help(message: types.Message):
-    help_text = """
-    Вот что я умею:
-    /start - Начать диалог
-    /help - Показать это сообщение
-    Фильмы - Показать фильмы
-    Аниме - Показать аниме
-    Мультсериалы - Показать мультсериалы
-    Найди <название> - Найти фильм или сериал
-    """
-    await message.reply(help_text)
-8. Итоговый код
-Вот итоговый код с учетом всех улучшений:
-
-python
-Copy
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.utils import executor
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-import os
 import logging
+import asyncio
+import aiohttp
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 logging.basicConfig(level=logging.INFO)
 
-API_TOKEN = 'ВАШ_ТОКЕН_ЗДЕСЬ'
+API_TOKEN = '7462539798:AAFQ4WJl34YT0oNKl1c8t_nJgNgsJmOqNYg'
+KINO_API_KEY = 'VV0J3CV-04DM6JJ-NB4DYGW-PC3JXWV'  # Ваш API-ключ
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
-dp.middleware.setup(LoggingMiddleware())
+dp = Dispatcher()
+class FilterState(StatesGroup):
+    waiting_for_genre = State()
+    waiting_for_year = State()
+    waiting_for_rating = State()
 
-# Создаем папку для загрузки файлов, если она не существует
-if not os.path.exists('./downloads'):
-    os.makedirs('./downloads')
 
-# Клавиатура
-button1 = KeyboardButton(text='Фильмы')
-button2 = KeyboardButton(text='Аниме')
-button3 = KeyboardButton(text='Мультсериалы')
-keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-keyboard.add(button1, button2)
-keyboard.add(button3)
+async def search_kinopoisk(query: str, filters: dict = None):
+    url = "https://api.kinopoisk.dev/v1.3/movie"
+    headers = {"X-API-KEY": KINO_API_KEY}
+    params = {"name": query, "limit": 10, "sortField": "rating.kp", "sortType": "-1"}  # Ограничиваем 10 фильмами
+    
+    if filters:
+        params.update(filters)
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers, params=params) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data.get("docs"):
+                    movies = []
+                    for movie in data["docs"]:
+                        title = movie.get("name", "Название неизвестно")
+                        year = movie.get("year", "Год неизвестен")
+                        rating = movie.get("rating", {}).get("kp", "Нет рейтинга")
+                        description = movie.get("description", "Описание отсутствует")
+                        poster = movie.get("poster", {}).get("url", None)
+                        
+                        text = (f"*{title}* ({year})\n"
+                                f"⭐️ Рейтинг: {rating}\n"
+                                f"📜 Описание: {description}")
+                        movies.append((text, poster))
+                    
+                    return movies
+                else:
+                    return [("Ничего не найдено.", None)]
+            else:
+                return [("Ошибка при запросе к API.", None)]
 
-@dp.message_handler(lambda message: message.text.lower().startswith("найди"))
-async def search_content(message: types.Message):
-    query = message.text.lower().replace("найди", "").strip()
-    if query:
-        await message.reply(f"Ищу {query}...")
-        await message.reply(f"Вот что я нашел: https://www.ivi.ru/search/?q={query}")
+# Команда: /start
+@dp.message(Command("start"))
+async def send_welcome(message: Message):
+    await message.answer(
+        "Привет! Я бот для поиска фильмов, сериалов, мультфильмов и аниме.\n"
+        "Используй команды:\n"
+        "/search <название фильма> - поиск по названию\n"
+        "/filter - поиск с фильтрами"
+    )
+
+@dp.message(Command("search"))
+async def search_movies(message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Пожалуйста, укажите название фильма. Например: /search Интерстеллар", parse_mode="Markdown")
+        return
+
+    movies = await search_kinopoisk(args[1])
+
+    for text, poster in movies:
+        if poster:
+            await message.answer_photo(photo=poster, caption=text, parse_mode="Markdown")
+        else:
+            await message.answer(text, parse_mode="Markdown")
+
+
+@dp.message(Command("filter"))
+async def filter_movies(message: Message):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton(text="Жанр", callback_data="filter_genre"),
+        InlineKeyboardButton(text="Год", callback_data="filter_year"),
+        InlineKeyboardButton(text="Рейтинг", callback_data="filter_rating")
+    )
+    await message.answer("Выберите фильтр:", reply_markup=keyboard)
+
+
+@dp.callback_query(lambda c: c.data.startswith('filter_'))
+async def process_filter(callback_query: types.CallbackQuery, state: FSMContext):
+    filter_type = callback_query.data.split('_')[1]
+    
+    if filter_type == "genre":
+        await callback_query.message.answer("Введите жанр (например, комедия, боевик):")
+        await state.set_state(FilterState.waiting_for_genre)
+    elif filter_type == "year":
+        await callback_query.message.answer("Введите год (например, 2020):")
+        await state.set_state(FilterState.waiting_for_year)
+    elif filter_type == "rating":
+        await callback_query.message.answer("Введите минимальный рейтинг (например, 7):")
+        await state.set_state(FilterState.waiting_for_rating)
+
+@dp.message(FilterState.waiting_for_genre)
+async def apply_genre_filter(message: Message, state: FSMContext):
+    genre = message.text.strip()
+    filters = {"genres.name": genre}
+    await process_filters(message, filters)
+    await state.clear()
+
+@dp.message(FilterState.waiting_for_year)
+async def apply_year_filter(message: Message, state: FSMContext):
+    year = message.text.strip()
+    if year.isdigit() and len(year) == 4:
+        filters = {"year": year}
+        await process_filters(message, filters)
     else:
-        await message.reply("Пожалуйста, укажите название фильма или сериала.")
+        await message.answer("Пожалуйста, введите корректный год (например, 2020).")
+    await state.clear()
 
-@dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
-    inline_kb = InlineKeyboardMarkup()
-    inline_kb.add(InlineKeyboardButton("Фильмы", url="https://www.ivi.ru/movies/dlya_vsej_semi"))
-    inline_kb.add(InlineKeyboardButton("Аниме", url="https://www.kinopoisk.ru/lists/movies/top_100_horrors_by_best_horror_movies/"))
-    inline_kb.add(InlineKeyboardButton("Мультсериалы", url="https://www.ivi.ru/movies/dlya_vsej_semi"))
-    await message.reply("Привет! Я бот Борис наждачка. Что вы хотите посмотреть сегодня?", reply_markup=keyboard)
+@dp.message(FilterState.waiting_for_rating)
+async def apply_rating_filter(message: Message, state: FSMContext):
+    rating = message.text.strip()
+    if rating.isdigit():
+        filters = {"rating.kp": rating}
+        await process_filters(message, filters)
+    else:
+        await message.answer("Пожалуйста, введите корректный рейтинг (например, 7).")
+    await state.clear()
 
-@dp.message_handler(lambda message: "фильм" in message.text.lower())
-async def send_movies(message: types.Message):
-    await message.reply("Лови: https://www.ivi.ru/movies/dlya_vsej_semi")
+async def process_filters(message: Message, filters: dict):
+    movies = await search_kinopoisk("", filters)
+    for text, poster in movies:
+        if poster:
+            await message.answer_photo(photo=poster, caption=text, parse_mode="Markdown")
+        else:
+            await message.answer(text, parse_mode="Markdown")
 
-@dp.message_handler(lambda message: "аниме" in message.text.lower())
-async def send_anime(message: types.Message):
-    await message.reply("Лови: https://www.kinopoisk.ru/lists/movies/top_100_horrors_by_best_horror_movies/?utm_referrer=www.google.com")
+async def main():
+    await dp.start_polling(bot)
 
-@dp.message_handler(lambda message: "мультсериал" in message.text.lower())
-async def send_cartoons(message: types.Message):
-    await message.reply("Лови: https://www.ivi.ru/movies/dlya_vsej_semi")
-
-@dp.message_handler(content_types=types.ContentType.DOCUMENT)
-async def handle_document(message: types.Message):
-    try:
-        document_id = message.document.file_id
-        file_info = await bot.get_file(document_id)
-        await bot.download_file(file_info.file_path, f"./downloads/{message.document.file_name}")
-        await message.reply(f"Файл {message.document.file_name} получен и сохранен.")
-    except Exception as e:
-        await message.reply(f"Произошла ошибка: {e}")
-
-@dp.message_handler(commands=['help'])
-async def send_help(message: types.Message):
-    help_text = """
-    Вот что я умею:
-    /start - Начать диалог
-    /help - Показать это сообщение
-    Фильмы - Показать фильмы
-    Аниме - Показать аниме
-    Мультсериалы - Показать мультсериалы
-    Найди <название> - Найти фильм или сериал
-    """
-    await message.reply(help_text)
-
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
 
