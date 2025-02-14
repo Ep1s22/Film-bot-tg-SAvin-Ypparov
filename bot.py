@@ -1,101 +1,79 @@
 import logging
 import asyncio
 import aiohttp
+import json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+# логи
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 API_TOKEN = '7462539798:AAFQ4WJl34YT0oNKl1c8t_nJgNgsJmOqNYg'
-KINO_API_KEY = 'VV0J3CV-04DM6JJ-NB4DYGW-PC3JXWV'  
+KINO_API_KEY = 'VV0J3CV-04DM6JJ-NB4DYGW-PC3JXWV'  # Ваш API-ключ
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
+# фсм
 class FilterState(StatesGroup):
     waiting_for_year = State()
     waiting_for_rating = State()
 
-# Функция для поиска фильмов через API Кинопоиска
+# кинопоиск функ
 async def search_kinopoisk(query: str, filters: dict = None):
     url = "https://api.kinopoisk.dev/v1.3/movie"
     headers = {"X-API-KEY": KINO_API_KEY}
-    params = {"name": query, "limit": 10, "sortField": "rating.kp", "sortType": -1}  # Ограничиваем 10 фильмами
+    params = {"name": query, "limit": 10, "sortField": "rating.kp", "sortType": "-1"}  # Ограничиваем 10 фильмами
+    
     if filters:
         params.update(filters)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, params=params) as response:
-            if response.status == 200:
-                data = await response.json()
-                print(f"API Response {data}")  # Логируем ответ API
-                if data.get("docs"):
-                    movies = []
-                    for movie in data["docs"]:
-                        title = movie.get("name", "Название неизвестно")
-                        year = movie.get("year", "Год неизвестен")
-                        rating = movie.get("rating", {}).get("kp", "Нет рейтинга")
-                        description = movie.get("description", "Описание отсутствует")
-                        poster = movie.get("poster", {}).get("url", None)
-                        streamings = movie.get("streamings", [])
-                        trailer = movie.get("videos", {}).get("trailers", [{}])[0].get("url", None)  # Получаем первый трейлер
-                        streaming_buttons = []
-                        if streamings:
-                            for platform in streamings:
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    logger.info(f"API Response: {json.dumps(data, ensure_ascii=False, indent=4)}")
+                    
+                    if data.get("docs"):
+                        movies = []
+                        for movie in data["docs"]:
+                            title = movie.get("name", "Название неизвестно")
+                            year = movie.get("year", "Год неизвестен")
+                            rating = movie.get("rating", {}).get("kp", "Нет рейтинга")
+                            description = movie.get("description", "Описание отсутствует")
+                            poster = movie.get("poster", {}).get("url", None)
+                            watchability = movie.get("watchability", {}).get("items", [])
+
+                            streaming_buttons = []
+                            for platform in watchability:
                                 name = platform.get("name", "Неизвестная платформа")
                                 url = platform.get("url", "#")
                                 if url and name:
                                     streaming_buttons.append([InlineKeyboardButton(text=name, url=url)])
-                        # Добавляем кнопку трейлера, если она существует
-                        if trailer:
-                            streaming_buttons.append([InlineKeyboardButton(text="Смотреть трейлер 🎥", url=trailer)])
-                        text = f"{title} ({year})\n⭐️ Рейтинг {rating}\n📜 Описание {description}"
-                        movies.append((text, poster, streaming_buttons))
-                    return movies
+                            
+                            text = (f"*{title}* ({year})\n"
+                                    f"⭐️ Рейтинг: {rating}\n"
+                                    f"📜 Описание: {description}")
+                            
+                            movies.append((text, poster, streaming_buttons))
+                        
+                        return movies
+                    else:
+                        logger.warning(f"No results found for query: {query}, filters: {filters}")
+                        return [("Ничего не найдено.", None, [])]
                 else:
-                    print(f"No results found for query {query}, filters {filters}")
-                    return [("Ничего не найдено.", None, [])]
-            else:
-                print(f"API Error {response.status}, {await response.text()}")
-                return [("Ошибка при запросе к API.", None, [])]
+                    logger.error(f"API Error: {response.status}, {await response.text()}")
+                    return [("Ошибка при запросе к API.", None, [])]
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return [("Произошла ошибка при обработке запроса.", None, [])]
 
-
-# Отображение фильма с кнопками "Вперед" и "Назад"
-async def show_film(message: types.Message, films: list, index: int, chat_id: int):
-    if not films:
-        await message.answer("Ничего не найдено.")
-        return
-
-    text, poster, streaming_buttons = films[index]
-
-    # Создаем клавиатуру с кнопками "Вперед" и "Назад"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="← Назад", callback_data=f"prev_{chat_id}_{index}"),
-            InlineKeyboardButton(text="Вперед →", callback_data=f"next_{chat_id}_{index}")
-        ]
-    ])
-
-    if streaming_buttons:
-        keyboard.inline_keyboard.extend(streaming_buttons)
-
-    if poster:
-        await bot.send_photo(chat_id, photo=poster, caption=text, reply_markup=keyboard)
-    else:
-        await bot.send_message(chat_id, text=text, reply_markup=keyboard)
-
-
-
-    if streaming_buttons:
-        keyboard.inline_keyboard.extend(streaming_buttons)
-
-    if poster:
-        await bot.send_photo(chat_id, photo=poster, caption=text, reply_markup=keyboard)
-    else:
-        await bot.send_message(chat_id, text=text, reply_markup=keyboard)
-
+# осн команды
 def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
@@ -106,23 +84,31 @@ def get_main_keyboard():
     )
     return keyboard
 
-def get_search_suggestions():
-    suggestions = [
-        "Интерстеллар",
-        "Матрица",
-        "Властелин колец",
-        "Зеленая миля",
-        "Титаник",
-        "Джокер",
-        "Аватар",
-        "Пираты Карибского моря",
-        "Гарри Поттер",
-        "Веном"
-    ]
-    return suggestions
+# клава еще (назад)
+def get_back_keyboard():
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Назад 🔙")]],
+        resize_keyboard=True
+    )
+    return keyboard
 
-def get_search_suggestions_keyboard():
-    suggestions = get_search_suggestions()
+# фильмы на предложке
+async def get_popular_movies():
+    url = "https://api.kinopoisk.dev/v1.3/movie"
+    headers = {"X-API-KEY": KINO_API_KEY}
+    params = {"sortField": "votes.kp", "sortType": "-1", "limit": 10}  # Топ-10 по количеству голосов
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers, params=params) as response:
+            if response.status == 200:
+                data = await response.json()
+                return [movie.get("name", "Неизвестно") for movie in data.get("docs", [])]
+            else:
+                return ["Интерстеллар", "Матрица", "Властелин колец"]  # Запасной список
+
+# кнопки с фильмами на предложке
+async def get_search_suggestions_keyboard():
+    suggestions = await get_popular_movies()
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=film, callback_data=f"search_{film}")] for film in suggestions
     ])
@@ -137,40 +123,31 @@ async def send_welcome(message: Message):
         reply_markup=get_main_keyboard()
     )
 
+# поиск фильма САМОЕ ПЕРВНОЕ ЧТО НАПИСАЛ НЕ РАБОТАЛО 3 ДНЯ 
 @dp.message(lambda message: message.text == "Поиск фильма 🔍")
 async def handle_search_button(message: Message):
     await message.answer(
         "Выберите фильм из предложенных вариантов или напишите название самостоятельно:",
-        reply_markup=get_search_suggestions_keyboard()
+        reply_markup=await get_search_suggestions_keyboard()
     )
 
 @dp.callback_query(lambda c: c.data.startswith('search_'))
 async def process_search_suggestion(callback_query: types.CallbackQuery):
     query = callback_query.data.split('_')[1]
     movies = await search_kinopoisk(query)
-    for text, poster, streaming_buttons in movies:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=streaming_buttons) if streaming_buttons else None
-        
-        if poster:
-            await callback_query.message.answer_photo(photo=poster, caption=text, parse_mode="Markdown", reply_markup=keyboard)
-        else:
-            await callback_query.message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+    await send_movies(callback_query.message, movies)
 
+# обрабатывает что было щакинуто в поиск
 @dp.message(lambda message: not message.text.startswith("/") and not message.text.startswith("Фильтр"))
 async def process_movie_search(message: Message):
     query = message.text.strip()
     if query:
         movies = await search_kinopoisk(query)
-        for text, poster, streaming_buttons in movies:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=streaming_buttons) if streaming_buttons else None
-            
-            if poster:
-                await message.answer_photo(photo=poster, caption=text, parse_mode="Markdown", reply_markup=keyboard)
-            else:
-                await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+        await send_movies(message, movies)
     else:
         await message.answer("Пожалуйста, укажите название фильма.")
 
+# обработка двух фильтров должно было быть 3 но 3 перестал работать ((
 @dp.message(lambda message: message.text == "Фильтр по параметрам 📋")
 async def handle_filter_button(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -181,6 +158,7 @@ async def handle_filter_button(message: Message):
     ])
     await message.answer("Выберите фильтр:", reply_markup=keyboard)
 
+# обратные запросы кинопоиску
 @dp.callback_query(lambda c: c.data.startswith('filter_'))
 async def process_filter(callback_query: types.CallbackQuery, state: FSMContext):
     filter_type = callback_query.data.split('_')[1]
@@ -190,6 +168,7 @@ async def process_filter(callback_query: types.CallbackQuery, state: FSMContext)
     elif filter_type == "rating":
         await show_rating_buttons(callback_query.message, state)
 
+# кнопочки с годами 
 async def show_year_buttons(message: Message, state: FSMContext):
     year_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="2023", callback_data="year_2023")],
@@ -207,6 +186,7 @@ async def show_year_buttons(message: Message, state: FSMContext):
     await message.answer("Выберите год:", reply_markup=year_keyboard)
     await state.set_state(FilterState.waiting_for_year)
 
+# кнопочки с рейтингом
 async def show_rating_buttons(message: Message, state: FSMContext):
     rating_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="7+", callback_data="rating_7")],
@@ -235,15 +215,47 @@ async def apply_rating_filter(callback_query: types.CallbackQuery, state: FSMCon
     await process_filters(callback_query.message, filters)
     await state.clear()
 
+# если введен в поиск не учитаный вариант года
+@dp.message(FilterState.waiting_for_year)
+async def handle_unexpected_input_year(message: Message, state: FSMContext):
+    await message.answer("Пожалуйста, выберите год из предложенных вариантов или введите корректный год (например, 2020).")
+
+# если введен в поиск не учитаный вариант рейта
+@dp.message(FilterState.waiting_for_rating)
+async def handle_unexpected_input_rating(message: Message, state: FSMContext):
+    await message.answer("Пожалуйста, выберите рейтинг из предложенных вариантов или введите корректный рейтинг (например, 7.5).")
+
 async def process_filters(message: Message, filters: dict):
     movies = await search_kinopoisk("", filters)
-    for text, poster, streaming_buttons in movies:
+    await send_movies(message, movies)
+
+# что бы не все сразу
+async def send_movies(message: Message, movies: list, page: int = 0):
+    movies_per_page = 3  # Количество фильмов на одной странице
+    start = page * movies_per_page
+    end = start + movies_per_page
+    movies_to_send = movies[start:end]
+
+    for text, poster, streaming_buttons in movies_to_send:
         keyboard = InlineKeyboardMarkup(inline_keyboard=streaming_buttons) if streaming_buttons else None
         
         if poster:
             await message.answer_photo(photo=poster, caption=text, parse_mode="Markdown", reply_markup=keyboard)
         else:
             await message.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+
+    # кнопочка для навигации 
+    if len(movies) > end:
+        navigation_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Следующие ➡️", callback_data=f"next_page_{page + 1}")]
+        ])
+        await message.answer("Показать ещё?", reply_markup=navigation_keyboard)
+
+@dp.callback_query(lambda c: c.data.startswith('next_page_'))
+async def handle_next_page(callback_query: types.CallbackQuery):
+    page = int(callback_query.data.split('_')[2])
+    movies = await search_kinopoisk("")  # Здесь нужно передать текущий запрос
+    await send_movies(callback_query.message, movies, page)
 
 async def main():
     await dp.start_polling(bot)
